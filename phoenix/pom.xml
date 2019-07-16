@@ -17,6 +17,7 @@
 
     <modules>
         <module>jdbc</module>
+        <module>spark</module>
     </modules>
 
     <dependencies>
