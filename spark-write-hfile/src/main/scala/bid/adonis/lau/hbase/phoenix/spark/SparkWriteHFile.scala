@@ -4,6 +4,7 @@ import java.io.IOException
 import java.util.Date
 
 import bid.adonis.lau.hbase.phoenix.spark.config.SparkConfig
+import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.hbase._
@@ -97,8 +98,10 @@ object SparkWriteHFile {
 
     val hbaseContext = new HBaseContext(spark.sparkContext, hBaseConf)
 
+    println("datahiveDF 的 partition 数量为", datahiveDF.rdd.getNumPartitions)
+
     // 将DataFrame转换bulkload需要的RDD格式
-    val rddnew = datahiveDF.rdd.map(row => {
+    val rddnew = datahiveDF.rdd.repartition((datahiveDF.count() / 100000).toInt).map(row => {
       val rowKey = row.getAs[String](rowKeyField)
 
       fields.map(field => {
@@ -111,7 +114,7 @@ object SparkWriteHFile {
 
     // 使用HBaseContext的bulkload生成HFile文件
     println("数据生成HFile开始", new Date())
-    hbaseContext.bulkLoad[Put](rddnew.map(record => {
+    hbaseContext.bulkLoad[Put](rddnew.repartition((datahiveDF.count() / 100000).toInt).map(record => {
       val put = new Put(record._1)
       record._2.foreach(putValue => put.addColumn(putValue._1, putValue._2, putValue._3))
       put
@@ -119,15 +122,15 @@ object SparkWriteHFile {
 
     println("数据生成HFile完成", new Date())
 
-    val conn = ConnectionFactory.createConnection(hBaseConf)
-    val hbTableName = TableName.valueOf(hBaseTempTable.getBytes())
-    val regionLocator = new HRegionLocator(hbTableName, classOf[ClusterConnection].cast(conn))
-    val realTable = conn.getTable(hbTableName)
-    HFileOutputFormat2.configureIncrementalLoad(Job.getInstance(), realTable, regionLocator)
-
     // bulk load start
     if (args != null && args.length > 1 && args(1) != null && args(1).equalsIgnoreCase("save")) {
       println("开始load数据", new Date())
+      val conn = ConnectionFactory.createConnection(hBaseConf)
+      val hbTableName = TableName.valueOf(hBaseTempTable.getBytes())
+      val regionLocator = new HRegionLocator(hbTableName, classOf[ClusterConnection].cast(conn))
+      val realTable = conn.getTable(hbTableName)
+      HFileOutputFormat2.configureIncrementalLoad(Job.getInstance(), realTable, regionLocator)
+
       val loader = new LoadIncrementalHFiles(hBaseConf)
       val admin = conn.getAdmin
       loader.doBulkLoad(new Path(hfilePath), admin, realTable, regionLocator)
@@ -176,5 +179,3 @@ object SparkWriteHFile {
     ret.iterator
   }
 }
-
-
